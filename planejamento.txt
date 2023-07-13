@@ -1,0 +1,17 @@
+1. Adicionar o tipo ao cliente
+A -> Acesso total
+B -> Trocar a senha e add devices e emepreendimentos
+C -> Só visualizar e trocar a senha
+
+2. Organizar a página do device:
+graficos
+
+3. Testar tudo
+
+4. Instalar Mosquitto
+
+5. Testar esp32
+
+6. Usar mysql
+
+7. Subir Hostinger

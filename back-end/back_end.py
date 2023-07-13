@@ -1,9 +1,16 @@
-from flask import Flask, jsonify, request
-from flask_jwt_extended import JWTManager, jwt_required, create_access_token
-from flask_jwt_extended import unset_jwt_cookies, get_jwt_identity
+from flask import Flask
+from flask import jsonify
+from flask import request
+from flask_jwt_extended import JWTManager
+from flask_jwt_extended import jwt_required
+from flask_jwt_extended import create_access_token
+from flask_jwt_extended import unset_jwt_cookies
+from flask_jwt_extended import get_jwt_identity
 from flask_cors import CORS
-import json
 from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
+import json
+
 
 app = Flask(__name__)
 CORS(app)
@@ -28,6 +35,7 @@ class User(db.Model):
     email = db.Column(db.String(50), unique=True)
     password = db.Column(db.String(50))
     phone = db.Column(db.String(15))
+    classe = db.Column(db.String(15))
     #empreendimentos = db.relationship('Empreendimento', secondary=users_empreendimentos, backref='users', lazy=True)
     #empreendimentos = db.relationship('Empreendimento', backref='user', lazy=True)
     empreendimentos = db.relationship('Empreendimento', secondary=users_empreendimentos, backref=db.backref('users', lazy=True))
@@ -47,6 +55,7 @@ class Ambiente(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(50))
     empreendimento_id = db.Column(db.Integer, db.ForeignKey('empreendimento.id'), nullable=False)
+    tipo = db.Column(db.String(50)) # Fazenda ou Outros
     devices = db.relationship('Device', backref='ambiente', lazy=True)
 
 class Device(db.Model):
@@ -61,6 +70,7 @@ class DadosDevice(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     device_id = db.Column(db.Integer, db.ForeignKey('device.id'), nullable=False)
     json_data = db.Column(db.String)
+    timestamp=datetime.utcnow()
 
 @app.route('/users/empreendimento/<int:empreendimento_id>', methods=['GET'])
 def get_users_by_empreendimento(empreendimento_id):
@@ -151,6 +161,26 @@ def update_user(user_id):
     db.session.commit()
     return jsonify({'message': 'User updated successfully'})
 
+@app.route('/users/change_password', methods=['POST'])
+@jwt_required()
+def change_password():
+    data = request.json
+    user_id = data.get('user_id')
+    old_password = data.get('old_password')
+    new_password = data.get('new_password')
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+
+    if user.password != old_password:
+        return jsonify({'message': 'Invalid old password'}), 400
+
+    user.password = new_password
+    db.session.commit()
+
+    return jsonify({'message': 'Password changed successfully'})
+
 @app.route('/users/<int:user_id>', methods=['DELETE'])
 def delete_user(user_id):
     user = User.query.get(user_id)
@@ -240,7 +270,8 @@ def get_ambientes():
         {
             'id': ambiente.id,
             'nome': ambiente.nome,
-            'empreendimento_id': ambiente.empreendimento_id
+            'empreendimento_id': ambiente.empreendimento_id,
+            'tipo': ambiente.tipo
         }
         for ambiente in ambientes
     ]
@@ -252,16 +283,17 @@ def create_ambiente():
     data = request.json
     ambiente = Ambiente(
         nome=data['nome'],
-        empreendimento_id=data['empreendimento_id']
+        empreendimento_id=data['empreendimento_id'],
+        tipo=data['tipo']
     )
-    print(ambiente.nome, ambiente.empreendimento_id)
+    print(ambiente.nome, ambiente.empreendimento_id, ambiente.tipo)
     db.session.add(ambiente)
     db.session.commit()
     return jsonify({'message': 'Ambiente created successfully'})
 
 
 
-@app.route('/ambientes/<int:empreendimento_id>', methods=['GET'])
+@app.route('/ambientes/empreendimento/<int:empreendimento_id>', methods=['GET'])
 @jwt_required()
 def get_ambiente(empreendimento_id):
     ambientes = Ambiente.query.filter_by(empreendimento_id=empreendimento_id).all()
@@ -272,10 +304,27 @@ def get_ambiente(empreendimento_id):
         {
             'id': ambiente.id,
             'nome': ambiente.nome,
-            'empreendimento_id': ambiente.empreendimento_id
+            'empreendimento_id': ambiente.empreendimento_id,
+            'tipo': ambiente.tipo
         }
         for ambiente in ambientes
     ]
+    
+    return jsonify(ambientes_data)
+
+@app.route('/ambientes/<int:amdiente_id>', methods=['GET'])
+@jwt_required()
+def get_ambiente_id(amdiente_id):
+    ambientes = Ambiente.query.filter_by(id=amdiente_id).first()
+    if not ambientes:
+        return jsonify({'message': 'Ambientes not found'}), 404
+
+    ambientes_data = {
+            'id': ambientes.id,
+            'nome': ambientes.nome,
+            'empreendimento_id': ambientes.empreendimento_id,
+            'tipo': ambientes.tipo
+        }
     
     return jsonify(ambientes_data)
 
@@ -290,7 +339,8 @@ def get_ambientes_by_user(user_id):
         {
             'id': ambiente.id,
             'nome': ambiente.nome,
-            'empreendimento_id': ambiente.empreendimento_id
+            'empreendimento_id': ambiente.empreendimento_id,
+            'tipo': ambiente.tipo
         }
         for ambiente in ambientes
     ]
@@ -425,6 +475,11 @@ def delete_device(device_id):
         return jsonify({'message': 'Device not found'}), 404
     db.session.delete(device)
     db.session.commit()
+    dado = DadosDevice.query.get(device_id = device_id)
+    if not dado:
+        return jsonify({'message': 'Dado not found'}), 404
+    db.session.delete(dado)
+    db.session.commit()
     return jsonify({'message': 'Device deleted successfully'})
 
 @app.route('/dados', methods=['GET'])
@@ -432,7 +487,6 @@ def get_dados():
     dados = DadosDevice.query.all()
     dados_data = [{'id': dado.id, 'json_data': dado.json_data} for dado in dados]
     return jsonify(dados_data)
-
 
 @app.route('/dados', methods=['POST'])
 def create_dado():
