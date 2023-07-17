@@ -1,3 +1,4 @@
+import paho.mqtt.client as mqtt
 from flask import Flask
 from flask import jsonify
 from flask import request
@@ -10,6 +11,8 @@ from flask_cors import CORS
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import json
+import pytz
+
 
 
 app = Flask(__name__)
@@ -20,6 +23,8 @@ app.config['JWT_SECRET_KEY'] = 'jwt-secret-key'
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = 1800  # 30 minute
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
+MQTT_URL = "127.0.0.1"
+
 
 # Defina as classes de modelo para as entidades
 
@@ -70,7 +75,47 @@ class DadosDevice(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     device_id = db.Column(db.Integer, db.ForeignKey('device.id'), nullable=False)
     json_data = db.Column(db.String)
-    timestamp=datetime.utcnow()
+    timestamp = db.Column(db.DateTime, default=datetime.now, nullable=False)
+
+# Callbacks MQTT
+def on_connect(client, userdata, flags, rc):
+    print("Conectado. Código de retorno:", rc)
+    client.subscribe("cmesi/data/+")
+
+def on_message(client, userdata, msg):
+    try:
+        payload = json.loads(msg.payload)
+        print("payload recebido:", payload)
+        with app.app_context():
+            mqtt_salvar_dados(payload)
+    except json.JSONDecodeError:
+        print("Erro ao decodificar o payload da mensagem MQTT")
+    except Exception as e:
+        print("Erro ao processar a mensagem MQTT:", str(e))
+
+def mqtt_salvar_dados(data):
+    device = Device.query.filter_by(serial_number=data['serial_number']).first()
+    if not device:
+        return jsonify({'message': 'Device not found'})
+    
+    json_data = json.dumps(data['json_data'])  # Converter o objeto JSON em uma string
+
+    timestamp = datetime.now(pytz.timezone('America/Recife'))
+    dado = DadosDevice(device_id = device.id, json_data=json_data, timestamp=timestamp)
+    # dado.device_id = device.id
+    db.session.add(dado)
+    db.session.commit()
+    print("Novo dado recebido")
+
+def start_mosquitto():
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_message = on_message
+
+    broker_address = MQTT_URL  # Substitua pelo endereço do seu broker MQTT
+    client.connect(broker_address)
+
+    client.loop_start()
 
 @app.route('/users/empreendimento/<int:empreendimento_id>', methods=['GET'])
 def get_users_by_empreendimento(empreendimento_id):
@@ -134,7 +179,8 @@ def get_users():
 @app.route('/users', methods=['POST'])
 def create_user():
     data = request.json
-    user = User(name=data['name'], email=data['email'], password=data['password'], phone=data['phone'])
+    user = User(name=data['name'], email=data['email'], password=data['password'], phone=data['phone'], classe=data['classe'])
+    print("user.classe", user.classe)
     db.session.add(user)
     db.session.commit()
     return jsonify({'message': 'User created successfully'})
@@ -175,6 +221,22 @@ def change_password():
 
     if user.password != old_password:
         return jsonify({'message': 'Invalid old password'}), 400
+
+    user.password = new_password
+    db.session.commit()
+
+    return jsonify({'message': 'Password changed successfully'})
+
+
+@app.route('/users/super_user/change_password', methods=['POST'])
+def super_user_change_password():
+    data = request.json
+    user_id = data.get('user_id')
+    new_password = data.get('new_password')
+
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
 
     user.password = new_password
     db.session.commit()
@@ -497,8 +559,9 @@ def create_dado():
     
     json_data = json.dumps(data['json_data'])  # Converter o objeto JSON em uma string
 
-    dado = DadosDevice(json_data=json_data)
-    dado.device_id = device.id
+    timestamp = datetime.now(pytz.timezone('America/Recife'))
+    dado = DadosDevice(device_id = device.id, json_data=json_data, timestamp=timestamp)
+    # dado.device_id = device.id
     db.session.add(dado)
     db.session.commit()
     return jsonify({'message': 'Dado created successfully'})
@@ -522,7 +585,8 @@ def get_device_dados(id_device):
         return jsonify({'message': 'Device not found'}), 404
 
     dados = DadosDevice.query.filter_by(device_id=device.id).all()
-    dados_data = [{'id': dado.id, 'json_data': dado.json_data} for dado in dados]
+    dados_data = [{'id': dado.id, 'json_data': dado.json_data, 'timestamp': dado.timestamp} for dado in dados]
+    dados_data.reverse()  # Inverter a ordem dos dados
     return jsonify(dados_data)
 
 @app.route('/dados/<int:dado_id>', methods=['GET'])
@@ -579,7 +643,8 @@ def login():
         # Defina o token de acesso nos cookies de resposta
         # Obtenha o ID do usuário atualmente autenticado
         user_id = user.id
-        response = jsonify({'message': 'Login successful', 'id': user_id, 'access_token': access_token})
+        response = jsonify({'message': 'Login successful', 'id': user_id, 'access_token': access_token, 'user_class': user.classe})
+        print("user.classe: ", user.classe)
         response.set_cookie('access_token', access_token, httponly=True)
 
         return response, 200
@@ -611,4 +676,11 @@ def protected_route():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+
+    # Iniciar o Mosquitto em uma thread separada
+    import threading
+    mosquitto_thread = threading.Thread(target=start_mosquitto)
+    mosquitto_thread.start()
+
+    # Executar o aplicativo Flask
     app.run(debug=True)

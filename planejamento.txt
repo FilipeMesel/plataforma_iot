@@ -1,17 +1,11 @@
-1. Adicionar o tipo ao cliente
-A -> Acesso total
-B -> Trocar a senha e add devices e emepreendimentos
-C -> Só visualizar e trocar a senha
+1. Implementar as classes de clientes
+A -> Pode tudo, inclusive criar novo cliente e bloquear clientes
+B -> Só pode criar nova estação
+C -> Só pode vizualisar o que já tem ok
+D -> Cliente bloqueado...nem login pode fazer ok
 
-2. Organizar a página do device:
-graficos
+3. Implementar o hash de senha [CHAT GPT ME FUDEU]
 
-3. Testar tudo
-
-4. Instalar Mosquitto
-
-5. Testar esp32
-
-6. Usar mysql
+4. Usar o MySQL em vez de SQLite
 
 7. Subir Hostinger
